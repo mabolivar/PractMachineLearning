@@ -1,0 +1,106 @@
+---
+title: "Practical Machine Learning Project"
+author: "Manuel A. Bolivar"
+date: "Monday, June 15, 2015"
+output: html_document
+---
+
+This document presents the application of a machine learning algorithm to predict the activity quality of an exercise using accelerometry data. The source of the data is: <http://groupware.les.inf.puc-rio.br/har> 
+
+```{r, echo=F,message=F}
+#Working directory
+setwd("C:\\Users\\Manuel\\Dropbox\\Coursera\\Data Science Specialization\\HW & Projects\\Practical machine learning\\Project")
+
+#libraries
+library(caret)
+library(parallel)
+library(doParallel)
+library(MASS)
+library(ggplot2)
+library(randomForest)
+
+#Read data
+acdata <- read.table("pml_train.csv",stringsAsFactors=T,sep=",",header=T)
+validation <- read.csv("pml_test.csv")
+rfdata <- read.csv("sensitivity analysis2.csv")
+
+```
+##Data
+The data is composed of 160 variables and 19622 observations. Each variable refers to a measure took by an accelerometer at the time that 6 of participants were performing a weight lifting excercise with different qualities (A,B,C,D,E). 
+
+```{r, echo=F}
+qplot(x=classe,fill=user_name,data=acdata)+ylab("Number of observations")
+```
+
+A lot of variables contain high number of missing values so I decided to remove them. The new data set is composed of 55 variables and the same 19622 observations.
+
+```{r, echo=F,message=F}
+#Obtain column classes
+classes <- sapply(acdata, class)
+#Factor variables with high missing data
+namesFact <- names(acdata)[classes=="factor"]
+namesFact <- namesFact[!namesFact%in%c("classe")]
+
+#Other variables with high missing data
+numNA <- sapply(acdata,function(x) sum(is.na(x)))
+namesMiss <- names(numNA)[numNA>nrow(acdata)*.8]
+
+#Remove all varibles with high number of missing values
+acdata <- acdata[,!names(acdata)%in%c(namesFact,namesMiss,"X")]
+validation <- validation[,!names(validation)%in%c(namesFact,namesMiss,"X")]
+
+```
+
+#Methods
+
+The tidy data was divided into a training and testing data sets with $60\%$ and $40\%$ of the orginal data, respectively. 
+
+```{r dataSplit}
+#Divide data set
+set.seed(123)
+testobs <- createDataPartition(acdata$classe,p = .4,list = F)
+test <- acdata[testobs,]
+train <- acdata[-testobs,]
+```
+
+A different set of algorithms where implemented to predict the activity quality of the excercise, in this case, Random Forest, Linear Discriminant Analysis, and Quadratic Discriminant Analysis. Random Forest obtained better results so I'm going to explain how was their parameters selected. 
+
+Initially, I decided to use cross validation to choose an adecuated number of variables to randomly sample as candidates at each split in each tree (`mtry` parameter). Using the estimated of the test error within the training set, I select the adecuated parameters. To perform this procedure I used the `train` function in the caret package. Finally, it is important to notice that the number of trees used in the random forest is 25 (`ntree= 25`) because we need to take into account that if the number of trees is higher the computational time also increases but not the accuracy as seen in the following figure.
+
+```{r rfSelection, echo=F}
+ggplot(aes(n,a),data=rfdata)+geom_line(size=1.2, color="steelblue")+ylab("Model accuracy")+xlab("Number of trees")
+```
+
+```{r cache=T}
+fitControl <- trainControl(## 10-fold CV
+  method = "cv",
+  number = 10,)
+
+mf_rf25 <- train(train$classe ~ .,method = "rf",ntree = 25,data=train,
+                    trControl=fitControl)
+mf_rf25
+```
+
+As the reader may appreciate in the previos output the number of variables chose randomly to split the tree is 28 out of 55 at each node with an test estimated error rate of $`r round(1-mf_rf25$results[2,2],3)`$. This parameter was selected using the accuracy of the model computed as the sum of the test error obtained through 10 cross validation folds. The following code chunk presents the performance of the algorithm within the training set.
+
+```{r trainRF}
+mf_rf25$finalModel
+```
+
+To obtain an unbiased estimate of the out-of-sample error I run the model over the testing set and obtained the following results.
+
+```{r testRF}
+pred_rf <- predict(mf_rf25,newdata=test)
+confusionMatrix(test$classe,pred_rf)
+```
+
+For this model the out of sample error is `r round(1-confusionMatrix(test$classe,pred_rf)$overall[1],3)`. Taking this into account I can say that the model provides a good performace in the task of predicting the activity quality on new information.
+
+These are the results over the validation data set:
+```{r validationRF}
+pred_rf <- predict(mf_rf25,newdata=validation)
+pred_rf
+```
+
+##Conclusion
+I used an machine learning algorithm to predict the activity quality of exercise using accelerometry data. I found that using weak predictors as trees and combining them using random forest provides good performance in this data set compare to other models like linear and quadratic discriminant analysis (LDA and QDA, respectively). As future work, it would interesting if an approach like random forest is applied to methods like LDA or QDA. 
